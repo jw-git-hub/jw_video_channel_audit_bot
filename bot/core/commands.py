@@ -7,6 +7,9 @@
 
 Правка ядра 2: у бренда могут быть правовые ссылки (Brand.terms_url, Brand.privacy_url) — тогда в приветствии
 и /about есть абзац согласия «Присылая ссылку, вы принимаете [условия] и [политику]». Нет ссылок — нет абзаца.
+
+Правка ядра 3: если у бренда есть правовые ссылки, /start до запуска показывает приветствие целиком — с абзацем
+согласия, — а ниже «скоро откроется». Без ссылок до запуска — только «скоро откроется», как у чекера.
 """
 import contextlib
 from collections.abc import Callable
@@ -76,11 +79,15 @@ def legal_paragraph(brand: Brand | None, texts: Texts, lang: Lang) -> dict | Non
 
 
 def start_message(brand: Brand, texts: Texts, lang: Lang, is_open: bool) -> dict:
-    if not is_open:
-        return simple_message(texts, lang, texts.get(lang, "not_open_yet"), brand)
     legal = legal_paragraph(brand, texts, lang)
+    if not is_open and legal is None:
+        return simple_message(texts, lang, texts.get(lang, "not_open_yet"), brand)
     blocks = [page_header(texts, lang, brand), rich.paragraph(texts.get(lang, "welcome"))]
-    return rich.message(blocks + ([legal] if legal else []))
+    if legal is not None:
+        blocks.append(legal)
+    if not is_open:
+        blocks.append(rich.paragraph(texts.get(lang, "not_open_yet")))
+    return rich.message(blocks)
 
 
 def about_message(brand: Brand, texts: Texts, lang: Lang) -> tuple[dict, dict]:

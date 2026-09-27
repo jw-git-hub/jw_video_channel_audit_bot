@@ -9,6 +9,7 @@ from bot.core import rich
 from bot.core.commands import (on_about, on_lang, on_lang_chosen, on_order, on_start, page_header, setup_commands,
                                simple_message)
 from bot.core.commands import Brand, about_message, legal_paragraph
+from bot.core.commands import start_message
 from bot.core.messenger import EMPTY_KEYBOARD
 from bot.core.users import Users
 from bot.locales import TEXTS
@@ -130,3 +131,20 @@ async def test_welcome_and_about_carry_the_legal_paragraph(db, settings):
     assert "Присылая ссылку, вы принимаете условия YouTube и мою политику данных." in messenger.last()
     await on_about(make_message("/about"), users=users, messenger=messenger, texts=TEXTS, brand=BRAND)
     assert "мою политику данных" in messenger.last()
+
+
+async def test_start_before_launch_shows_welcome_legal_and_soon(db, settings):
+    """Согласие видят и те, кого соберут метками до запуска (ТЗ аудита, раздел 3)."""
+    messenger = FakeMessenger()
+    await on_start(make_message("/start fb", user_id=500), start("fb"), users=Users(db, FakeClock()),
+                   messenger=messenger, texts=TEXTS, settings=settings, brand=BRAND)
+    text = messenger.last()
+    assert "Пришлите ссылку на YouTube-канал" in text
+    assert "Присылая ссылку, вы принимаете" in text
+    assert text.endswith("Бот скоро откроется — загляните через пару дней.")
+
+
+def test_start_before_launch_without_legal_is_only_soon():
+    """Бренд без правовых ссылок (как у чекера) до запуска показывает только «скоро откроется»."""
+    text = rich_text(start_message(PLAIN_BRAND, TEXTS, "ru", is_open=False))
+    assert text == ">jw ~/аудит-канала_\nБот скоро откроется — загляните через пару дней."

@@ -47,4 +47,7 @@ TEXTS = {
     "command_stats": "Учёт",
     "command_channel": "Аудиты канала",
     "command_forget": "Удалить данные человека",
+    "age_today": "сегодня",
+    "age_yesterday": "вчера",
+    "age_ago": "{amount} назад",
 }

@@ -48,4 +48,7 @@ TEXTS = {
     "command_stats": "Stats",
     "command_channel": "Audits of a channel",
     "command_forget": "Delete a person's data",
+    "age_today": "today",
+    "age_yesterday": "yesterday",
+    "age_ago": "{amount} ago",
 }

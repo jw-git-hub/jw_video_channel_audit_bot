@@ -1,8 +1,12 @@
 """Общие команды экосистемы (ТЗ, раздел 8): /start <метка>, /lang, /about, /order и меню команд.
 
 Имя, описания, аватар и обложку бота код не трогает — только меню команд (setMyCommands).
+
+Правка ядра 1 (аудит видеоканала, для jw_core): шапку сообщений даёт бренд — поставщиком Brand.header. Нет
+поставщика — шапка прежняя, моноширинная строка из локали, как у сайт-чекера.
 """
 import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from aiogram import Bot, F, Router
@@ -24,30 +28,39 @@ PUBLIC_COMMANDS = ("start", "lang", "about", "order")
 DEFAULT_MENU_LANG: Lang = "en"
 RUSSIAN_MENU_LANG: Lang = "ru"
 
+HeaderBuilder = Callable[[Lang, str], dict]  # язык и раздел шапки → блок шапки
+
 
 @dataclass(frozen=True)
 class Brand:
     dm_username: str  # личка разработчика
     channel_url: str
     site_url: str
+    header: HeaderBuilder | None = None  # шапка-картинка бота; нет — строка из локали
 
 
 router = Router(name="core_commands")
 
 
-def simple_message(texts: Texts, lang: Lang, text: str) -> dict:
-    return rich.message([rich.header(texts.get(lang, "header_section")), rich.paragraph(text)])
+def page_header(texts: Texts, lang: Lang, brand: Brand | None = None) -> dict:
+    section = texts.get(lang, "header_section")
+    if brand is not None and brand.header is not None:
+        return brand.header(lang, section)
+    return rich.header(section)
 
 
-def lang_choice(texts: Texts, lang: Lang) -> tuple[dict, dict]:
+def simple_message(texts: Texts, lang: Lang, text: str, brand: Brand | None = None) -> dict:
+    return rich.message([page_header(texts, lang, brand), rich.paragraph(text)])
+
+
+def lang_choice(texts: Texts, lang: Lang, brand: Brand | None = None) -> tuple[dict, dict]:
     buttons = [rich.button_callback(name, LANG_CALLBACK_PREFIX + code) for code, name in LANGUAGES.items()]
-    message = rich.message([rich.header(texts.get(lang, "header_section")),
-                            rich.paragraph(texts.get(lang, "lang_choose"))])
+    message = rich.message([page_header(texts, lang, brand), rich.paragraph(texts.get(lang, "lang_choose"))])
     return message, rich.keyboard(*buttons)
 
 
 def about_message(brand: Brand, texts: Texts, lang: Lang) -> tuple[dict, dict]:
-    message = rich.message([rich.header(texts.get(lang, "header_section")), rich.paragraph(texts.get(lang, "about")),
+    message = rich.message([page_header(texts, lang, brand), rich.paragraph(texts.get(lang, "about")),
                             rich.divider(), rich.footer()])
     keyboard = rich.keyboard(rich.button_url(texts.get(lang, "about_site_button"), brand.site_url),
                              rich.button_url(texts.get(lang, "channel_button"), brand.channel_url))
@@ -56,7 +69,7 @@ def about_message(brand: Brand, texts: Texts, lang: Lang) -> tuple[dict, dict]:
 
 def order_message(brand: Brand, texts: Texts, lang: Lang) -> tuple[dict, dict]:
     link = rich.dm_link(brand.dm_username, texts.get(lang, "order_prefill"))
-    message = rich.message([rich.header(texts.get(lang, "header_section")), rich.paragraph(texts.get(lang, "order")),
+    message = rich.message([page_header(texts, lang, brand), rich.paragraph(texts.get(lang, "order")),
                             rich.divider(), rich.footer()])
     keyboard = rich.keyboard(rich.button_url(texts.get(lang, "order_button"), link, rich.STYLE_PRIMARY))
     return message, keyboard
@@ -64,20 +77,21 @@ def order_message(brand: Brand, texts: Texts, lang: Lang) -> tuple[dict, dict]:
 
 @router.message(CommandStart())
 async def on_start(message: Message, command: CommandObject, users: Users, messenger: Messenger, texts: Texts,
-                   settings: CoreSettings) -> None:
+                   settings: CoreSettings, brand: Brand) -> None:
     user = await users.touch(message.from_user.id, message.from_user.language_code, parse_label(command.args))
     key = "welcome" if is_open_for(settings, user.user_id) else "not_open_yet"
-    await messenger.send(message.chat.id, simple_message(texts, user.lang, texts.get(user.lang, key)))
+    await messenger.send(message.chat.id, simple_message(texts, user.lang, texts.get(user.lang, key), brand))
 
 
 @router.message(Command("lang"))
-async def on_lang(message: Message, users: Users, messenger: Messenger, texts: Texts) -> None:
+async def on_lang(message: Message, users: Users, messenger: Messenger, texts: Texts, brand: Brand) -> None:
     user = await users.touch(message.from_user.id, message.from_user.language_code)
-    await messenger.send(message.chat.id, *lang_choice(texts, user.lang))
+    await messenger.send(message.chat.id, *lang_choice(texts, user.lang, brand))
 
 
 @router.callback_query(F.data.startswith(LANG_CALLBACK_PREFIX))
-async def on_lang_chosen(callback: CallbackQuery, users: Users, messenger: Messenger, texts: Texts) -> None:
+async def on_lang_chosen(callback: CallbackQuery, users: Users, messenger: Messenger, texts: Texts,
+                         brand: Brand) -> None:
     lang = callback.data.removeprefix(LANG_CALLBACK_PREFIX)
     # Устаревшее нажатие («query is too old») не должно ронять обработчик выбора языка.
     with contextlib.suppress(TelegramAPIError):
@@ -86,7 +100,8 @@ async def on_lang_chosen(callback: CallbackQuery, users: Users, messenger: Messe
         return
     await best_effort(users.set_lang(callback.from_user.id, lang), "выбор языка", None)
     chat_id, message_id = callback.message.chat.id, callback.message.message_id
-    await edit_or_send(messenger, chat_id, message_id, simple_message(texts, lang, texts.get(lang, "lang_done")))
+    done = simple_message(texts, lang, texts.get(lang, "lang_done"), brand)
+    await edit_or_send(messenger, chat_id, message_id, done)
 
 
 @router.message(Command("about"))

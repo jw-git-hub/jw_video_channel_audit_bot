@@ -38,7 +38,13 @@ async def test_a_failing_statement_does_not_print_its_parameters(tmp_path):
     assert "hide_parameters=True" in text_of_error
 
 
-async def test_wiped_and_forgotten_data_is_not_readable_in_the_file(tmp_path):
+SETUP_CHECKPOINT_PRAGMA = "PRAGMA wal_checkpoint(FULL)"  # только чтобы загнать маркеры в bot.db перед проверкой
+DB_FILE_NAMES = ("bot.db", "bot.db-wal")
+
+
+async def test_wiped_and_forgotten_data_is_flushed_out_of_wal_with_the_engine_still_open(tmp_path):
+    """WAL-режим (F2): secure_delete чистит только страницу в bot.db-wal, старая живёт в bot.db до контрольной
+    точки. wipe_youtube_data и AuditsRepo.forget_user должны сами перенести и стереть её (bot/engine.py)."""
     data_dir = tmp_path / "data"
     engine = open_engine(data_dir)
     await migrate(engine, MIGRATIONS, tmp_path / "backups", "t")
@@ -46,11 +52,25 @@ async def test_wiped_and_forgotten_data_is_not_readable_in_the_file(tmp_path):
                        handle=WIPED_MARKER, user_id=WIPED_USER)
     await insert_audit(engine, FAKE_NOW, channel_id="UCforgot01234567890123", handle=FORGOTTEN_MARKER,
                        user_id=FORGOTTEN_USER)
+    async with engine.connect() as connection:
+        await connection.execute(text(SETUP_CHECKPOINT_PRAGMA))
+    main_before = (data_dir / "bot.db").read_bytes()
+    assert WIPED_MARKER.encode() in main_before, "разгон не сработал: маркер должен сперва оказаться в bot.db"
+    assert FORGOTTEN_MARKER.encode() in main_before
+
     await wipe_youtube_data(engine, FAKE_NOW)
     await AuditsRepo(engine, FakeClock()).forget_user(FORGOTTEN_USER)
-    async with engine.connect() as connection:
-        await connection.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
-    await engine.dispose()
-    raw = (data_dir / "bot.db").read_bytes()
-    assert WIPED_MARKER.encode() not in raw
-    assert FORGOTTEN_MARKER.encode() not in raw
+
+    try:
+        _assert_marker_absent_everywhere(data_dir, WIPED_MARKER)
+        _assert_marker_absent_everywhere(data_dir, FORGOTTEN_MARKER)
+    finally:
+        await engine.dispose()
+
+
+def _assert_marker_absent_everywhere(data_dir, marker: str) -> None:
+    for name in DB_FILE_NAMES:
+        path = data_dir / name
+        if not path.exists():
+            continue
+        assert marker.encode() not in path.read_bytes(), f"{marker} остался читаемым в {name}"

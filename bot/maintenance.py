@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from bot.channel_audit.thresholds import API_DATA_DAYS
 from bot.core.clock import to_iso
 from bot.core.db import DAILY_BACKUP_PREFIX, backup_daily, daily_backup_path
+from bot.engine import flush_deleted
 
 PRE_MIGRATION_GLOB = "pre-v*.db"
 SECONDS_IN_DAY = 86_400
@@ -25,7 +26,9 @@ WHERE created_at < :before AND (channel_id IS NOT NULL OR handle IS NOT NULL)"""
 async def wipe_youtube_data(engine: AsyncEngine, now: datetime) -> int:
     before = to_iso(now - timedelta(days=API_DATA_DAYS))
     async with engine.begin() as connection:
-        return (await connection.execute(text(WIPE), {"before": before})).rowcount
+        rowcount = (await connection.execute(text(WIPE), {"before": before})).rowcount
+    await flush_deleted(engine)
+    return rowcount
 
 
 def drop_old_migration_copies(backup_dir: Path, now: datetime) -> list[Path]:

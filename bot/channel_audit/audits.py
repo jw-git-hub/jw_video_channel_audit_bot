@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bot.core.clock import Clock, from_iso, to_iso
+from bot.engine import flush_deleted
 
 RUNNING = "running"
 DONE = "done"
@@ -179,6 +180,7 @@ class AuditsRepo:
         async with self._engine.begin() as connection:
             audits = (await connection.execute(text(FORGET_AUDITS), {"user_id": user_id})).rowcount
             await connection.execute(text(FORGET_USER), {"user_id": user_id})
+        await flush_deleted(self._engine)
         return audits
 
 

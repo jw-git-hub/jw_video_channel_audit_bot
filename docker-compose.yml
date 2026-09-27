@@ -1,0 +1,47 @@
+# Аудит видеоканала @jw_video_channel_audit_bot (ТЗ, раздел 10, 14.3). Имя проекта задано явно: папка с пробелами.
+name: jw_video_channel_audit_bot
+
+services:
+  bot:
+    build: .
+    image: jw_video_channel_audit_bot:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATA_DIR: /app/data
+    volumes:
+      - ./data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    pids_limit: 64
+    dns: [1.1.1.1, 8.8.8.8]
+    networks: [channel_audit]
+    healthcheck:
+      # файл обновляет сторож внутри бота раз в 10 секунд; перезапускает при зависании он же (ТЗ, 14.3)
+      test: ["CMD", "python", "-c", "import os, sys, time; sys.exit(time.time() - os.path.getmtime('/tmp/alive') > 60)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  channel_audit:
+    driver: bridge
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.name: br-chaudit
+    ipam:
+      config:
+        - subnet: 172.30.98.0/24

@@ -202,14 +202,20 @@ esac
 
 
 def test_failure_after_server_touched_on_first_deploy_says_nothing_to_roll_back_to(project):
+    """Свежий клон отвечает на `git rev-parse HEAD` непустым sha (это его собственный HEAD, не пустая строка) —
+    без строки deploy.sh, которая обнуляет PREVIOUS_SHA_ON_SERVER при отсутствии контейнера, подсказка отката
+    ссылалась бы именно на этот sha, а не говорила «откатывать некуда»."""
+    fresh_clone_sha = "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
     ssh_script = """#!/usr/bin/env bash
 command="${@: -1}"
 case "$command" in
   *"git checkout"*) exit 1 ;;
   *"docker compose ps -a -q bot"*) : ;;
+  *"git rev-parse HEAD"*) printf '%s\\n' "$FRESH_CLONE_SHA" ;;
   *) exit 0 ;;
 esac
 """
-    result = deploy_with_ssh_script(project, ssh_script)
+    result = deploy_with_ssh_script(project, ssh_script, FRESH_CLONE_SHA=fresh_clone_sha)
     assert result.returncode == 1
     assert "откатывать некуда" in result.stderr.lower()
+    assert fresh_clone_sha not in result.stderr

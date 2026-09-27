@@ -137,4 +137,16 @@ TEXTS = {
     "limit_global": "There have been too many audits today. Please try tomorrow.",
     "busy": "Let me finish this channel first — send the new link once the report is in.",
     "interrupted": "The audit was interrupted. Send the link again — this attempt wasn't counted.",
+    # owner notifications (the owner reads Russian; English keeps the locale keys in sync)
+    "notify_key": "Google rejected the YouTube key. Audits are down — check the key in Google Cloud; the reason is in "
+                  "the bot log.",
+    "notify_quota": "The YouTube quota ran out. Until midnight Pacific time, in {hours} h, new audits are off; reports "
+                    "from the cache still work.",
+    "notify_units_ceiling": "The bot spent {units} quota units today — its own ceiling is {ceiling}. New audits are "
+                            "off until midnight Pacific time.",
+    "notify_global_limit": "The overall ceiling kicked in: {audits} a day. New people get \"try tomorrow\" until "
+                           "{time}.",
+    "notify_api_shape": "YouTube answered in an unexpected shape. Audits fail — a developer is needed; the method and "
+                        "the audit number are in the bot log.",
+    "notify_banner": "The banner didn't upload — messages go with a text line instead of the picture.",
 }

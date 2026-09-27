@@ -162,6 +162,21 @@ async def test_second_link_during_audit_is_refused(db, settings):
         "@bike_example"]
 
 
+async def test_deadline_expiry_is_logged_with_the_audit_id(db, settings):
+    """DEADLINE переставал попадать в журнал вовсе (F8): владелец не видел, что аудиты упираются в срок."""
+    world = build_world(db, settings, client=working(GatedClient()), audit_seconds=0.05)
+    lines: list[str] = []
+    sink = logger.add(lines.append, format="{message}")
+    try:
+        await world.intake.handle_text(link("@bike_example"))
+    finally:
+        logger.remove(sink)
+    audit_id = (await rows(world.db, "SELECT id FROM audits"))[0][0]
+    log_text = "".join(lines)
+    assert str(audit_id) in log_text
+    assert "@bike_example" not in log_text and "bike_example" not in log_text
+
+
 async def test_crowded_when_no_place_frees_up_in_time(db, settings):
     slots = asyncio.Semaphore(1)
     await slots.acquire()  # единственное место занято чужим аудитом

@@ -35,6 +35,8 @@ NO_REASON = "—"
 QUOTA_REASONS = frozenset({"quotaExceeded", "dailyLimitExceeded"})
 RATE_REASONS = frozenset({"rateLimitExceeded", "userRateLimitExceeded"})
 KEY_REASONS = frozenset({"keyInvalid", "keyExpired", "forbidden", "accessNotConfigured", "ipRefererBlocked"})
+# Новые ответы Google кладут причину сюда, а errors[0].reason — в общее "badRequest" (ТЗ, разведка F3).
+KEY_DETAIL_REASONS = frozenset({"API_KEY_INVALID", "API_KEY_EXPIRED", "API_KEY_SERVICE_BLOCKED", "SERVICE_DISABLED"})
 KEY = "key"
 RATE = "rate"
 SHAPE = "shape"
@@ -109,12 +111,12 @@ class YouTubeClient:
             raise QuotaExhausted(blocked)
         meter.units += UNITS_PER_REQUEST
         await self._quota.spend(UNITS_PER_REQUEST)
-        status, body = await self._request(method, params, deadline)
+        status, body = await self._request(method, params, deadline, meter)
         payload = _json_or_none(body)
         logger.info("аудит {}: YouTube {} — HTTP {}, reason {}", meter.audit_id, method, status, reason_of(payload))
         return await self._interpret(status, payload)
 
-    async def _request(self, method: str, params: dict[str, str], deadline: float) -> tuple[int, bytes]:
+    async def _request(self, method: str, params: dict[str, str], deadline: float, meter: Meter) -> tuple[int, bytes]:
         seconds = min(self._request_timeout, max(MIN_TIMEOUT_SECONDS, deadline - self._clock.monotonic()))
         request = self._session.get(self._base_url + method, params=params, headers={KEY_HEADER: self._key},
                                     timeout=aiohttp.ClientTimeout(total=seconds), allow_redirects=False)
@@ -122,6 +124,7 @@ class YouTubeClient:
             async with request as response:
                 return response.status, await self._read(response)
         except (aiohttp.ClientError, TimeoutError) as error:
+            logger.warning("аудит {}: сеть {} — {}", meter.audit_id, method, type(error).__name__)
             raise _Retryable(f"network: {type(error).__name__}") from None
 
     async def _read(self, response: aiohttp.ClientResponse) -> bytes:
@@ -141,7 +144,7 @@ class YouTubeClient:
             raise QuotaExhausted(QUOTA)
         if reason in RATE_REASONS or status == TOO_MANY_REQUESTS:
             raise _Retryable(RATE, RATE_LIMIT_PAUSE_SECONDS)
-        if reason in KEY_REASONS:
+        if reason in KEY_REASONS or detail_reasons_of(payload) & KEY_DETAIL_REASONS:
             raise ServiceDown(KEY)
         if status >= FIRST_SERVER_ERROR:
             raise _Retryable(f"http {status}")
@@ -163,3 +166,13 @@ def reason_of(payload: dict[str, Any] | None) -> str:
     errors = error.get("errors") if isinstance(error, dict) else None
     first = errors[0] if isinstance(errors, list) and errors and isinstance(errors[0], dict) else {}
     return str(first.get("reason") or NO_REASON)
+
+
+def detail_reasons_of(payload: dict[str, Any] | None) -> frozenset[str]:
+    """error.details[*].reason — коды вида API_KEY_INVALID, отдельные от errors[0].reason (ТЗ, разведка F3)."""
+    error = (payload or {}).get("error")
+    details = error.get("details") if isinstance(error, dict) else None
+    if not isinstance(details, list):
+        return frozenset()
+    reasons = (item.get("reason") for item in details if isinstance(item, dict))
+    return frozenset(reason for reason in reasons if isinstance(reason, str))

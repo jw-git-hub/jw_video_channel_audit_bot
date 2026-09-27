@@ -10,7 +10,7 @@ from loguru import logger
 from bot.channel_audit import youtube
 from bot.channel_audit.kv import Kv
 from bot.channel_audit.quota import CEILING, QuotaGate
-from bot.channel_audit.youtube import KEY_HEADER, Meter, NotFound, QuotaExhausted, ServiceDown, YouTubeClient
+from bot.channel_audit.youtube import KEY, KEY_HEADER, Meter, NotFound, QuotaExhausted, ServiceDown, YouTubeClient
 from tests.fakes import FakeClock, fake_google_key
 
 OK_BODY = {"items": [{"id": "UCabcdefghijABCDEFGHIJ12"}]}
@@ -18,6 +18,12 @@ OK_BODY = {"items": [{"id": "UCabcdefghijABCDEFGHIJ12"}]}
 
 def google_error(status: int, reason: str) -> dict:
     return {"error": {"code": status, "message": "…", "errors": [{"reason": reason}]}}
+
+
+def google_error_with_detail(status: int, reason: str, detail_reason: str) -> dict:
+    return {"error": {"code": status, "message": "…", "errors": [{"reason": reason}],
+                      "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": detail_reason,
+                                  "domain": "googleapis.com"}]}}
 
 
 class FakeGoogle:
@@ -124,6 +130,22 @@ async def test_rejected_key_is_service_down_without_retry(youtube_client):
     assert (down.value.reason, len(fake.requests)) == ("key", 1)
 
 
+async def test_bad_request_with_key_invalid_detail_is_service_down_key(youtube_client):
+    """Ключ мёртв или опечатан — Google теперь кладёт причину в error.details, а errors[0].reason — badRequest."""
+    fake = FakeGoogle((400, google_error_with_detail(400, "badRequest", "API_KEY_INVALID")))
+    client, _, clock = await youtube_client(fake)
+    with pytest.raises(ServiceDown) as down:
+        await call(client, clock)
+    assert down.value.reason == KEY
+
+
+async def test_plain_bad_request_without_key_detail_is_still_not_found(youtube_client):
+    fake = FakeGoogle((400, google_error(400, "badRequest")))
+    client, _, clock = await youtube_client(fake)
+    with pytest.raises(NotFound):
+        await call(client, clock)
+
+
 async def test_server_error_is_retried_once(youtube_client):
     fake = FakeGoogle((503, "Service Unavailable"), (200, OK_BODY))
     client, _, clock = await youtube_client(fake)
@@ -150,6 +172,21 @@ async def test_slow_answer_is_retried_then_service_down(youtube_client):
     client, _, clock = await youtube_client(fake, request_timeout=0.1)
     with pytest.raises(ServiceDown, match="network"):
         await call(client, clock)
+
+
+async def test_network_failure_is_logged_with_audit_id_method_and_error_type(youtube_client):
+    """Сетевой сбой не проходит молча (F8): в журнал — номер аудита, метод и тип ошибки, без адреса и текста."""
+    lines: list[str] = []
+    sink = logger.add(lines.append, format="{message}")
+    try:
+        fake = FakeGoogle((200, OK_BODY), (200, OK_BODY), delay=0.5)
+        client, _, clock = await youtube_client(fake, request_timeout=0.1)
+        with pytest.raises(ServiceDown):
+            await call(client, clock, meter=Meter(42))
+    finally:
+        logger.remove(sink)
+    text = "".join(lines)
+    assert "42" in text and "channels" in text and "TimeoutError" in text
 
 
 async def test_huge_answer_is_refused(youtube_client):

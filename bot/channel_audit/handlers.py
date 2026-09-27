@@ -154,6 +154,7 @@ class AuditRunner:
             return await asyncio.wait_for(self._auditor.run(job.target, job.deadline, meter),
                                           job.deadline - self._clock.monotonic())
         except TimeoutError:
+            logger.warning("аудит {}: срок вышел", job.audit_id)
             return AuditOutcome(error_code=SERVICE_DOWN, units=meter.units, reason=DEADLINE)
         except Exception:  # noqa: BLE001 — один аудит не должен ронять приём
             logger.exception("аудит {} упал", job.audit_id)

@@ -27,7 +27,7 @@ SENTENCE_JOIN = " "
 
 def build_report(texts: Texts, lang: Lang, brand: Brand, facts: Facts, found_by_name: bool) -> tuple[dict, dict]:
     today = local_date(facts.collected_at)
-    blocks = [page_header(texts, lang, brand), rich.heading(facts.title, TITLE_SIZE),
+    blocks = [page_header(texts, lang, brand), rich.heading(_heading_text(facts), TITLE_SIZE),
               _channel_paragraph(texts, lang, facts, found_by_name), *_sections(texts, lang, facts, today),
               *_ending(texts, lang, facts), _signature(texts, lang, facts, today), rich.divider(), rich.footer()]
     return rich.message(blocks), _keyboard(texts, lang, brand, facts)
@@ -36,6 +36,11 @@ def build_report(texts: Texts, lang: Lang, brand: Brand, facts: Facts, found_by_
 def channel_address(facts: Facts) -> str:
     """«youtube.com/@имя», а без @имени — «youtube.com/channel/UC…» (ТЗ, 7.1–7.2)."""
     return YOUTUBE_DISPLAY + (facts.handle or CHANNEL_PATH + facts.channel_id)
+
+
+def _heading_text(facts: Facts) -> str:
+    """Пустой заголовок Telegram, вероятно, отклонит — вместо него адрес канала (Minor 1)."""
+    return facts.title.strip() or channel_address(facts)
 
 
 def _channel_paragraph(texts: Texts, lang: Lang, facts: Facts, found_by_name: bool) -> dict:

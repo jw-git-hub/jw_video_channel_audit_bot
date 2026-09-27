@@ -166,6 +166,13 @@ def test_channel_found_by_name_says_so_under_the_link():
     assert "youtube.com/@bike-rental-example\nНашёл по имени — если это не тот канал" in text_of(message)
 
 
+def test_empty_title_falls_back_to_the_channel_address():
+    """Пустой заголовок Telegram, вероятно, отклонит (Minor 1): вместо него — адрес канала."""
+    facts = dataclasses.replace(working(), title="   ")
+    message, _ = build_report(TEXTS, "ru", BRAND, facts, found_by_name=False)
+    assert message["blocks"][1] == {"type": "heading", "size": 1, "text": "youtube.com/@bike-rental-example"}
+
+
 def test_channel_without_public_videos_gets_the_short_report():
     links = LinkSummary(LinkHits(telegram=True), 0, 0, 0, 0, None)
     facts = Facts(CHANNEL, "Новый канал", "@new-example", COLLECTED, links)

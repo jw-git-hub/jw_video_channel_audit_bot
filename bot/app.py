@@ -68,6 +68,7 @@ class Parts:
     brand: Brand
     banners: Banners
     heartbeat: Heartbeat
+    notifier: Notifier
 
 
 async def build(settings: Settings, clock: Clock) -> Parts:
@@ -87,7 +88,7 @@ async def build(settings: Settings, clock: Clock) -> Parts:
     await quota.load()
     intake = _auditing(settings, clock, Outputs(messenger, notifier, repo, TEXTS, brand), users, quota, http)
     dispatcher = build_dispatcher(settings, brand, users, repo, messenger, intake, quota, clock)
-    return Parts(bot, dispatcher, engine, http, repo, messenger, brand, banners, heartbeat)
+    return Parts(bot, dispatcher, engine, http, repo, messenger, brand, banners, heartbeat, notifier)
 
 
 def _auditing(settings: Settings, clock: Clock, outputs: Outputs, users: Users, quota: QuotaGate,
@@ -194,16 +195,37 @@ async def setup_commands_best_effort(bot: Bot, admin_id: int) -> None:
 
 async def maintenance_loop(engine: AsyncEngine, backup_dir: Path, clock: Clock) -> None:
     """Уборка данных YouTube и копия базы — при запуске и раз в 6 часов; копия за день — одна (ТЗ, раздел 12)."""
-    while True:
-        await best_effort(daily_maintenance(engine, backup_dir, clock.now()), "обслуживание базы", None)
-        await asyncio.sleep(MAINTENANCE_EVERY_SECONDS)
+    await _every(MAINTENANCE_EVERY_SECONDS, lambda: daily_maintenance(engine, backup_dir, clock.now()),
+                "обслуживание базы")
 
 
-async def banner_uploads(banners: Banners, bot: Bot, admin_id: int) -> None:
-    """Полосы — фоном при запуске; недостающие — раз в час: после неудачной загрузки или отказа Telegram (ТЗ, 7.6)."""
+async def banner_uploads(banners: Banners, bot: Bot, admin_id: int, notifier: Notifier) -> None:
+    """Полосы — фоном при запуске; недостающие — раз в час (ТЗ, 7.6). Не загрузилась — владельцу раз в сутки,
+    той же паузой notify_banner, что и отказ Telegram по сохранённому file_id (ТЗ, раздел 8)."""
+    await _every(BANNER_RETRY_SECONDS, lambda: _upload_missing_banners(banners, bot, admin_id, notifier), "полосы")
+
+
+async def _upload_missing_banners(banners: Banners, bot: Bot, admin_id: int, notifier: Notifier) -> None:
+    await banners.upload_missing(bot, admin_id)
+    if banners.missing():
+        await notifier.notify("banner", "notify_banner", DAY)
+
+
+async def _every(seconds: float, action: Callable[[], Awaitable[None]], what: str,
+                 sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
+    """Общий цикл фоновой задачи: сбой одной итерации не должен остановить повтор — кроме отмены при остановке."""
     while True:
-        await banners.upload_missing(bot, admin_id)
-        await asyncio.sleep(BANNER_RETRY_SECONDS)
+        await _run_once(action, what)
+        await sleep(seconds)
+
+
+async def _run_once(action: Callable[[], Awaitable[None]], what: str) -> None:
+    try:
+        await action()
+    except asyncio.CancelledError:
+        raise
+    except Exception as error:  # noqa: BLE001 — сбой одной итерации не должен ронять фоновый цикл
+        logger.warning("{}: сбой — {}", what, type(error).__name__)
 
 
 async def run(settings: Settings) -> None:
@@ -226,12 +248,21 @@ def _start_background(parts: Parts, settings: Settings, clock: Clock) -> list[as
     backup_dir = settings.data_dir / BACKUP_DIR_NAME
     return [asyncio.create_task(loop_pulse(parts.heartbeat), name="пульс"),
             asyncio.create_task(maintenance_loop(parts.engine, backup_dir, clock), name="обслуживание базы"),
-            asyncio.create_task(banner_uploads(parts.banners, parts.bot, settings.admin_id), name="полосы")]
+            asyncio.create_task(banner_uploads(parts.banners, parts.bot, settings.admin_id, parts.notifier),
+                                name="полосы")]
 
 
 async def _shutdown(parts: Parts, background: list[asyncio.Task]) -> None:
     for task in background:
         task.cancel()
-    await asyncio.gather(*background, return_exceptions=True)
+    results = await asyncio.gather(*background, return_exceptions=True)
+    _log_background_failures(background, results)
     await parts.http.close()
     await parts.engine.dispose()
+
+
+def _log_background_failures(tasks: list[asyncio.Task], results: list[object]) -> None:
+    """CancelledError — обычный итог остановки, не сбой; остальное — в журнал только по типу (Ю4)."""
+    for task, result in zip(tasks, results):
+        if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+            logger.warning("{}: не завершилась чисто — {}", task.get_name(), type(result).__name__)

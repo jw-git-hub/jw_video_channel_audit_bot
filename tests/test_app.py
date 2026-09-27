@@ -1,27 +1,36 @@
+import asyncio
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from aiogram import Dispatcher
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SetMyCommands
 from aiogram.types import Chat, Message, Update
+from loguru import logger
 
 from bot import app
 from bot.__main__ import EXIT_CONFIG
-from bot.app import (ADMIN_COMMANDS, _error_recipient, _throttle_notice_sender, build_dispatcher, close_interrupted,
-                     closed_answer, on_unexpected_error, setup_commands_best_effort, throttle_notice)
+from bot.app import (ADMIN_COMMANDS, _error_recipient, _every, _shutdown, _throttle_notice_sender,
+                     _upload_missing_banners, build_dispatcher, close_interrupted, closed_answer,
+                     on_unexpected_error, setup_commands_best_effort, throttle_notice)
 from bot.brand import BRAND
 from bot.channel_audit.audits import RUNNING, AuditsRepo, NewAudit
 from bot.channel_audit.banner import BannerSafeMessenger
 from bot.channel_audit.handlers import Intake
+from bot.channel_audit.kv import Kv
+from bot.channel_audit.notifier import Notifier
 from bot.core import rich
 from bot.core.users import Users
-from tests.fakes import (FAKE_NOW, FakeClock, FakeMessenger, fake_bot, fake_google_key, make_callback, make_message,
-                         make_user)
+from bot.locales import TEXTS
+from tests.fakes import (ADMIN_ID, FAKE_NOW, FakeClock, FakeMessenger, fake_bot, fake_google_key, make_callback,
+                         make_message, make_user)
 
 ROOT = Path(__file__).resolve().parents[1]
 STRANGER = 500
+SECRET_MARKER = "секретные данные канала"
 
 
 def test_missing_token_stops_start_without_showing_other_values():
@@ -133,3 +142,77 @@ async def test_menu_setup_failure_is_logged_not_raised():
     """Меню — косметика: сбой Telegram здесь не должен ронять запуск бота."""
     error = TelegramBadRequest(method=SetMyCommands(commands=[]), message="boom")
     await setup_commands_best_effort(fake_bot({"setMyCommands": error}), admin_id=1)
+
+
+async def test_background_loop_survives_a_failing_iteration_and_logs_only_the_type():
+    """Общий цикл (ТЗ, 7.6): сбой итерации — не Telegram-исключение — не глушит повтор; в журнал — только тип."""
+    calls: list[int] = []
+
+    async def action() -> None:
+        calls.append(len(calls))
+        if len(calls) == 1:
+            raise RuntimeError(SECRET_MARKER)
+
+    async def stop_after_second_iteration(seconds: float) -> None:
+        if len(calls) >= 2:
+            raise asyncio.CancelledError
+
+    lines: list[str] = []
+    sink = logger.add(lines.append, format="{message}")
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await _every(0, action, "полосы", sleep=stop_after_second_iteration)
+    finally:
+        logger.remove(sink)
+    assert calls == [0, 1]  # вторая итерация состоялась после сбоя первой
+    log_text = "".join(lines)
+    assert SECRET_MARKER not in log_text
+    assert "RuntimeError" in log_text
+
+
+class _StillMissingBanners:
+    """Полоса не загрузилась и после попытки — как если бы Telegram не принял её или сеть подвела."""
+
+    async def upload_missing(self, bot, admin_id: int) -> None:
+        return None
+
+    def missing(self) -> list[str]:
+        return ["ru"]
+
+
+async def test_owner_is_notified_once_a_day_when_a_banner_stays_missing(db):
+    """Не только отказ Telegram по сохранённому file_id, но и сама неудачная загрузка — раз в сутки (ТЗ, раздел 8)."""
+    messenger = FakeMessenger()
+    notifier = Notifier(messenger, ADMIN_ID, FakeClock(), TEXTS, BRAND, Kv(db))
+    await _upload_missing_banners(_StillMissingBanners(), fake_bot(), ADMIN_ID, notifier)
+    assert "Полоса не загрузилась" in messenger.last()
+    messenger.sent.clear()
+    await _upload_missing_banners(_StillMissingBanners(), fake_bot(), ADMIN_ID, notifier)
+    assert messenger.sent == []  # тот же день — повторного уведомления нет
+
+
+class _NoopCloser:
+    async def close(self) -> None:
+        return None
+
+    async def dispose(self) -> None:
+        return None
+
+
+async def test_shutdown_logs_background_task_failures_by_type():
+    """gather глушит исключение фоновой задачи (ТЗ, 7.6) — но не без следа: в журнал уходит только тип (Ю4)."""
+    async def boom() -> None:
+        raise RuntimeError(SECRET_MARKER)
+
+    task = asyncio.create_task(boom(), name="полосы")
+    await asyncio.sleep(0)  # дать задаче упасть до остановки
+    parts = SimpleNamespace(http=_NoopCloser(), engine=_NoopCloser())
+    lines: list[str] = []
+    sink = logger.add(lines.append, format="{message}")
+    try:
+        await _shutdown(parts, [task])
+    finally:
+        logger.remove(sink)
+    log_text = "".join(lines)
+    assert SECRET_MARKER not in log_text
+    assert "RuntimeError" in log_text

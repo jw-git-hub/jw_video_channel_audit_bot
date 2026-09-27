@@ -33,6 +33,7 @@ PAGES_MAX = 4
 BATCH = 50
 OVER_BATCH = 51
 UNKNOWN_HANDLE = "@jw-razvedka-net-takogo-" + uuid.uuid4().hex[:8]
+BAD_KEY = "razvedka-zavedomo-neverny-kluch-" + uuid.uuid4().hex  # не связан с настоящим ключом
 STAND_IN_PICTURE = Path(__file__).resolve().parents[1] / "_avatars" / "jw-video-channel-audit-cover-640x360.png"
 FIELDS = {
     "channels": "items(id,snippet(title,description,customUrl),contentDetails/relatedPlaylists/uploads)",
@@ -97,6 +98,19 @@ def reason(payload: dict) -> str:
     return str(errors[0].get("reason", "")) or "—"
 
 
+def detail_reasons(payload: dict) -> list[str]:
+    """error.details[*].reason — коды вида API_KEY_INVALID, Google кладёт их отдельно от errors[0].reason."""
+    details = (payload.get("error") or {}).get("details") or []
+    return [str(item["reason"]) for item in details if isinstance(item, dict) and item.get("reason")]
+
+
+def custom_url_shape(custom_url: str | None) -> dict[str, bool]:
+    """Форма snippet.customUrl без самого значения (ТЗ, Сек13): есть ли, начинается с @, кодировка, кириллица."""
+    value = custom_url or ""
+    return {"present": bool(custom_url), "starts_with_at": value.startswith("@"), "percent_encoded": "%" in value,
+            "non_ascii": not value.isascii()}
+
+
 def report(title: str, status: int, payload: dict, extra: str = "") -> None:
     items = payload.get("items")
     count = "нет items" if items is None else f"items: {len(items)}"
@@ -107,6 +121,24 @@ def channel_by(parameter: str, value: str) -> tuple[int, dict]:
     return youtube("channels", {"part": "snippet,contentDetails", parameter: value, "fields": FIELDS["channels"]})
 
 
+def report_custom_url_shape(label: str, payload: dict) -> None:
+    """Только форма snippet.customUrl и пустота title — сами значения каналов не печатаем (ТЗ, Сек13)."""
+    item = (payload.get("items") or [{}])[0]
+    snippet = item.get("snippet") or {}
+    print(f"{label}: customUrl — {custom_url_shape(snippet.get('customUrl'))}, "
+          f"title пустой — {not snippet.get('title')}")
+
+
+def check_bad_key(channel_id: str) -> None:
+    """Заведомо неверный ключ — не подобранный из настоящего (ТЗ, Ю11): как теперь выглядит отказ Google (F3)."""
+    REQUESTS["channels"] += 1
+    query = urllib.parse.urlencode({"part": "id", "id": channel_id})
+    status, payload = _open(urllib.request.Request(API + "channels?" + query, headers={KEY_HEADER: BAD_KEY}))
+    error = payload.get("error") or {}
+    print(f"ключ заведомо неверный: HTTP {status}, errors[0].reason {reason(payload)}, "
+          f"error.status {error.get('status', '—')}, details reasons {detail_reasons(payload)}")
+
+
 def check_key_and_fields(channel_id: str, shapes: bool) -> str | None:
     status, payload = youtube("channels", {"part": "id", "id": channel_id}, use_header=True)
     report("ключ в заголовке X-goog-api-key", status, payload)
@@ -114,6 +146,7 @@ def check_key_and_fields(channel_id: str, shapes: bool) -> str | None:
     report("ключ параметром key", status, payload)
     status, payload = channel_by("id", channel_id)
     report("fields channels.list", status, payload)
+    report_custom_url_shape("канал --channel", payload)
     if shapes:
         print("  форма:", json.dumps(skeleton(payload), ensure_ascii=False))
     items = payload.get("items") or [{}]
@@ -127,6 +160,7 @@ def check_handles(handles: list[str]) -> None:
         ids = {variant: ((payload.get("items") or [{}])[0].get("id")) for variant, (_, payload) in results.items()}
         print(f"forHandle: с @ / без @ / ВЕРХНИЙ РЕГИСТР — один канал: {len(set(ids.values())) == 1}, "
               f"найден: {all(ids.values())}")
+        report_custom_url_shape(f"канал {handle}", results[handle][1])
     status, payload = channel_by("forHandle", UNKNOWN_HANDLE)
     report("forHandle несуществующего имени", status, payload)
 
@@ -197,6 +231,18 @@ def _privacy(batch: str) -> Counter:
     return Counter((item.get("status") or {}).get("privacyStatus") for item in payload.get("items") or [])
 
 
+def check_empty_channel(empty_channel: str) -> None:
+    """Плейлист загрузок — через channels.list, не подменой UC→UU (ТЗ, 5.1, Ю11)."""
+    _, payload = channel_by("id", empty_channel)
+    items = payload.get("items") or [{}]
+    uploads = ((items[0].get("contentDetails") or {}).get("relatedPlaylists") or {}).get("uploads")
+    if not uploads:
+        print("пустой канал: плейлиста загрузок не нашлось")
+        return
+    status, payload = youtube("playlistItems", {"part": "contentDetails", "playlistId": uploads})
+    report("пустой плейлист загрузок", status, payload)
+
+
 def check_limits(ids: list[str], channel_id: str, empty_channel: str | None, premiere: str | None) -> None:
     if len(ids) >= OVER_BATCH:
         status, payload = youtube("videos", {"part": "id", "id": ",".join(ids[:OVER_BATCH])})
@@ -205,9 +251,7 @@ def check_limits(ids: list[str], channel_id: str, empty_channel: str | None, pre
     settings = ((payload.get("items") or [{}])[0].get("brandingSettings") or {}).get("channel") or {}
     print(f"brandingSettings.channel — ключи: {sorted(settings)}")
     if empty_channel:
-        uploads = "UU" + empty_channel[2:]
-        status, payload = youtube("playlistItems", {"part": "contentDetails", "playlistId": uploads})
-        report("пустой плейлист загрузок", status, payload)
+        check_empty_channel(empty_channel)
     if premiere:
         status, payload = youtube("videos", {"part": "snippet,liveStreamingDetails", "id": premiere})
         item = (payload.get("items") or [{}])[0]
@@ -217,6 +261,7 @@ def check_limits(ids: list[str], channel_id: str, empty_channel: str | None, pre
 
 def run_youtube(args: argparse.Namespace) -> None:
     uploads = check_key_and_fields(args.channel, args.shapes)
+    check_bad_key(args.channel)
     check_handles(args.handle)
     check_cyrillic(args.cyrillic_handle)
     check_legacy(args.legacy, args.user)

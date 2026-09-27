@@ -22,6 +22,30 @@ def test_skeleton_of_empty_list_is_empty_list():
     assert load_script().skeleton({"items": []}) == {"items": []}
 
 
+def test_detail_reasons_extracts_reason_values_from_error_details():
+    try_api = load_script()
+    payload = {"error": {"errors": [{"reason": "badRequest"}],
+                         "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                                     "reason": "API_KEY_INVALID", "domain": "googleapis.com"}]}}
+    assert try_api.detail_reasons(payload) == ["API_KEY_INVALID"]
+
+
+def test_detail_reasons_is_empty_without_details():
+    assert load_script().detail_reasons({"error": {"errors": [{"reason": "badRequest"}]}}) == []
+
+
+def test_custom_url_shape_flags_presence_and_encoding():
+    try_api = load_script()
+    assert try_api.custom_url_shape(None) == {"present": False, "starts_with_at": False, "percent_encoded": False,
+                                              "non_ascii": False}
+    assert try_api.custom_url_shape("@example") == {"present": True, "starts_with_at": True,
+                                                    "percent_encoded": False, "non_ascii": False}
+    assert try_api.custom_url_shape("%D0%B8%D0%BC%D1%8F") == {"present": True, "starts_with_at": False,
+                                                              "percent_encoded": True, "non_ascii": False}
+    assert try_api.custom_url_shape("имя") == {"present": True, "starts_with_at": False, "percent_encoded": False,
+                                              "non_ascii": True}
+
+
 def test_multipart_carries_fields_and_file(tmp_path):
     try_api = load_script()
     picture = tmp_path / "pic.png"

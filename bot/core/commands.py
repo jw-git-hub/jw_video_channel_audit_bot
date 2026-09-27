@@ -4,6 +4,9 @@
 
 Правка ядра 1 (аудит видеоканала, для jw_core): шапку сообщений даёт бренд — поставщиком Brand.header. Нет
 поставщика — шапка прежняя, моноширинная строка из локали, как у сайт-чекера.
+
+Правка ядра 2: у бренда могут быть правовые ссылки (Brand.terms_url, Brand.privacy_url) — тогда в приветствии
+и /about есть абзац согласия «Присылая ссылку, вы принимаете [условия] и [политику]». Нет ссылок — нет абзаца.
 """
 import contextlib
 from collections.abc import Callable
@@ -37,6 +40,8 @@ class Brand:
     channel_url: str
     site_url: str
     header: HeaderBuilder | None = None  # шапка-картинка бота; нет — строка из локали
+    terms_url: str | None = None  # условия площадки, которые человек принимает (у аудита — YouTube)
+    privacy_url: str | None = None  # своя политика данных
 
 
 router = Router(name="core_commands")
@@ -59,12 +64,32 @@ def lang_choice(texts: Texts, lang: Lang, brand: Brand | None = None) -> tuple[d
     return message, rich.keyboard(*buttons)
 
 
+def legal_paragraph(brand: Brand | None, texts: Texts, lang: Lang) -> dict | None:
+    """Абзац согласия со ссылками. Нет правовых ссылок у бренда — нет абзаца (как у чекера)."""
+    if brand is None or not (brand.terms_url and brand.privacy_url):
+        return None
+    return rich.paragraph(texts.get(lang, "legal_intro") + " ",
+                          rich.link(texts.get(lang, "legal_terms"), brand.terms_url),
+                          " " + texts.get(lang, "legal_and") + " ",
+                          rich.link(texts.get(lang, "legal_privacy"), brand.privacy_url),
+                          texts.get(lang, "legal_end"))
+
+
+def start_message(brand: Brand, texts: Texts, lang: Lang, is_open: bool) -> dict:
+    if not is_open:
+        return simple_message(texts, lang, texts.get(lang, "not_open_yet"), brand)
+    legal = legal_paragraph(brand, texts, lang)
+    blocks = [page_header(texts, lang, brand), rich.paragraph(texts.get(lang, "welcome"))]
+    return rich.message(blocks + ([legal] if legal else []))
+
+
 def about_message(brand: Brand, texts: Texts, lang: Lang) -> tuple[dict, dict]:
-    message = rich.message([page_header(texts, lang, brand), rich.paragraph(texts.get(lang, "about")),
-                            rich.divider(), rich.footer()])
+    legal = legal_paragraph(brand, texts, lang)
+    blocks = [page_header(texts, lang, brand), rich.paragraph(texts.get(lang, "about")),
+              *([legal] if legal else []), rich.divider(), rich.footer()]
     keyboard = rich.keyboard(rich.button_url(texts.get(lang, "about_site_button"), brand.site_url),
                              rich.button_url(texts.get(lang, "channel_button"), brand.channel_url))
-    return message, keyboard
+    return rich.message(blocks), keyboard
 
 
 def order_message(brand: Brand, texts: Texts, lang: Lang) -> tuple[dict, dict]:
@@ -79,8 +104,8 @@ def order_message(brand: Brand, texts: Texts, lang: Lang) -> tuple[dict, dict]:
 async def on_start(message: Message, command: CommandObject, users: Users, messenger: Messenger, texts: Texts,
                    settings: CoreSettings, brand: Brand) -> None:
     user = await users.touch(message.from_user.id, message.from_user.language_code, parse_label(command.args))
-    key = "welcome" if is_open_for(settings, user.user_id) else "not_open_yet"
-    await messenger.send(message.chat.id, simple_message(texts, user.lang, texts.get(user.lang, key), brand))
+    welcome = start_message(brand, texts, user.lang, is_open_for(settings, user.user_id))
+    await messenger.send(message.chat.id, welcome)
 
 
 @router.message(Command("lang"))

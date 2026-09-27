@@ -25,6 +25,11 @@ TEXTS = {
                "often videos come out, how they're watched and where the descriptions send viewers. A plain-language "
                "report in a few seconds. No passwords or channel access needed.",
     "not_open_yet": "The bot opens soon — check back in a couple of days.",
+    "legal_intro": "By sending a link, you accept the",
+    "legal_terms": "YouTube Terms of Service",
+    "legal_and": "and",
+    "legal_privacy": "my privacy policy",
+    "legal_end": ".",
     "lang_choose": "Choose a language.",
     "lang_done": "Done: I'll write in English.",
     "about": "I'm jw, and I made this bot. I build websites, Telegram bots and automation for what you still do "

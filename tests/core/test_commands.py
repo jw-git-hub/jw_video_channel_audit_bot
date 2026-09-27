@@ -8,12 +8,16 @@ from bot.brand import BRAND
 from bot.core import rich
 from bot.core.commands import (on_about, on_lang, on_lang_chosen, on_order, on_start, page_header, setup_commands,
                                simple_message)
+from bot.core.commands import Brand, about_message, legal_paragraph
 from bot.core.messenger import EMPTY_KEYBOARD
 from bot.core.users import Users
 from bot.locales import TEXTS
 from tests.fakes import ADMIN_ID, FakeClock, FakeMessenger, fake_bot, make_callback, make_message, rich_text
 
 ADMIN_COMMANDS = ("stats", "channel", "forget")
+
+PLAIN_BRAND = Brand(dm_username="jw_dev_pro", channel_url="https://t.me/jw_dev_pro_channel",
+                    site_url="https://jw-dev.pro")
 
 
 def start(args: str | None) -> CommandObject:
@@ -103,3 +107,26 @@ async def test_start_and_about_use_the_brand_header(db, settings):
     assert messenger.last().startswith("[фото banner-ru]")
     await on_about(make_message("/about"), users=users, messenger=messenger, texts=TEXTS, brand=brand)
     assert messenger.last().startswith("[фото banner-ru]")
+
+
+def test_legal_paragraph_links_terms_and_privacy():
+    paragraph = legal_paragraph(BRAND, TEXTS, "ru")
+    assert rich_text(rich.message([paragraph])) == ("Присылая ссылку, вы принимаете условия YouTube и мою политику "
+                                                    "данных.")
+    urls = [part["url"] for part in paragraph["text"] if isinstance(part, dict)]
+    assert urls == ["https://www.youtube.com/t/terms", "https://jw-dev.pro/privacy"]
+
+
+def test_brand_without_legal_urls_has_no_legal_paragraph():
+    """Как у чекера: без правовых ссылок нет и абзаца."""
+    assert legal_paragraph(PLAIN_BRAND, TEXTS, "ru") is None
+    assert "Присылая ссылку" not in rich_text(about_message(PLAIN_BRAND, TEXTS, "ru")[0])
+
+
+async def test_welcome_and_about_carry_the_legal_paragraph(db, settings):
+    messenger, users = FakeMessenger(), Users(db, FakeClock())
+    await on_start(make_message("/start", user_id=ADMIN_ID), start(None), users=users, messenger=messenger,
+                   texts=TEXTS, settings=settings, brand=BRAND)
+    assert "Присылая ссылку, вы принимаете условия YouTube и мою политику данных." in messenger.last()
+    await on_about(make_message("/about"), users=users, messenger=messenger, texts=TEXTS, brand=BRAND)
+    assert "мою политику данных" in messenger.last()

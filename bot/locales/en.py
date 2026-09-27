@@ -117,4 +117,24 @@ TEXTS = {
     "discuss_button": "Talk to the developer",
     "another_button": "Check another channel",
     "discuss_prefill": "From the channel audit: {channel}",
+    "checking": "Looking at the channel…",
+    "again": "Send a link to a YouTube channel, its @handle or a link to any of its videos.",
+    "not_a_link": "That doesn't look like a channel. Send a channel link, its @handle or a video link — for example, "
+                  "youtube.com/@name.",
+    "not_youtube": "That's not YouTube. Send a YouTube channel link, its @handle or a video link. Want a Telegram "
+                   "channel that fills itself? That's worth discussing with the developer.",
+    "playlist": "That's a playlist link. Send a link to the channel or to any of its videos.",
+    "not_text": "Please send the link as text.",
+    "not_found": "I can't find this channel — check the @handle for typos.",
+    "legacy_not_found": "YouTube no longer keeps old /c/… addresses, and I couldn't find a channel by this name. Send "
+                        "the channel's @handle or a link to any of its videos.",
+    "video_not_found": "I can't find this video — it's deleted or private. Send a channel link or another video.",
+    "quota": "I've run out of YouTube data — it comes back in {hours} h. This attempt wasn't counted.",
+    "service_down": "YouTube data isn't available right now. Try again in a few minutes — this attempt wasn't "
+                    "counted.",
+    "crowded": "Lots of audits right now — send the link again in a minute. This attempt wasn't counted.",
+    "limit_user": "The limit is {audits} a day. The next one will be available in {hours} h.",
+    "limit_global": "There have been too many audits today. Please try tomorrow.",
+    "busy": "Let me finish this channel first — send the new link once the report is in.",
+    "interrupted": "The audit was interrupted. Send the link again — this attempt wasn't counted.",
 }

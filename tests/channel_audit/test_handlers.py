@@ -5,6 +5,7 @@ import pytest
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import AnswerCallbackQuery
 from aiogram.types import MessageEntity
+from loguru import logger
 from sqlalchemy import text
 
 from bot.brand import BRAND
@@ -21,7 +22,7 @@ from bot.channel_audit.limits import Limits
 from bot.channel_audit.notifier import Notifier
 from bot.channel_audit.quota import CEILING, QUOTA, QuotaGate
 from bot.channel_audit.youtube import KEY, QuotaExhausted, ServiceDown
-from bot.core.messenger import DeliveryFailed
+from bot.core.messenger import DeliveryFailed, MessageGone
 from bot.core.users import Users
 from bot.locales import TEXTS
 from tests.builders import ScriptedClient, channel_item, days_ago, page, page_entry, video_item
@@ -31,6 +32,7 @@ USER = 77
 STATUS_ID = 101  # FakeMessenger нумерует с 101
 OTHER_CHANNEL = "UCzyxwvutsrqZYXWVUTSRQ98"
 RECENT_DAYS = range(1, 60, 6)  # 10 видео за 60 дней — видео выходят
+UNEXPECTED_ERROR_MARKER = "неожиданный-сбой-текст-которого-в-журнал-попадать-не-должен"
 
 
 @pytest.fixture(autouse=True)
@@ -276,6 +278,72 @@ async def test_final_message_delivery_recovers_after_one_retry(db, settings):
     world = build_world(db, settings, messenger=FlakyOnce())
     await world.intake.handle_text(link("@bike_example"))
     assert "Байк-прокат Пример" in rich_text(inner.edited[-1][2])
+
+
+class GoneThenBrokenResend:
+    """Правка сообщения не находит его (message gone), а повторная отправка человеку падает с неожиданной
+    ошибкой — не с DeliveryFailed. Первая отправка «Смотрю канал…» и отправка владельцу идут как обычно."""
+
+    def __init__(self, inner: FakeMessenger, chat_id: int, marker: str) -> None:
+        self._inner = inner
+        self._chat_id = chat_id
+        self._marker = marker
+        self._first_send_done = False
+
+    async def send(self, chat_id, rich_message, reply_markup=None):
+        if chat_id == self._chat_id and self._first_send_done:
+            raise RuntimeError(self._marker)
+        self._first_send_done = self._first_send_done or chat_id == self._chat_id
+        return await self._inner.send(chat_id, rich_message, reply_markup)
+
+    async def edit(self, chat_id, message_id, rich_message, reply_markup=None):
+        raise MessageGone("message to edit not found")
+
+
+async def test_report_delivery_survives_an_unexpected_error_and_still_tells_the_owner(db, settings):
+    """Правка падает с message gone, а повторная отправка — с неожиданной ошибкой (не DeliveryFailed):
+    учёт всё равно закрывается, владелец всё равно узнаёт, а в журнал уходит только тип ошибки (Ю4)."""
+    client = ScriptedClient()
+    client.channels["@bike_example"] = ServiceDown(KEY)
+    inner = FakeMessenger()
+    world = build_world(db, settings, client=client,
+                        messenger=GoneThenBrokenResend(inner, USER, UNEXPECTED_ERROR_MARKER))
+    lines: list[str] = []
+    sink = logger.add(lines.append, format="{message}")
+    try:
+        await world.intake.handle_text(link("@bike_example"))
+    finally:
+        logger.remove(sink)
+    log_text = "".join(lines)
+    assert UNEXPECTED_ERROR_MARKER not in log_text
+    assert "RuntimeError" in log_text
+    assert await rows(world.db, "SELECT status, error_code, charged FROM audits") == [("failed", "service_down", 0)]
+    admin_messages = [rich_text(message) for chat, message, _ in inner.sent if chat == ADMIN_ID]
+    assert admin_messages and "Google отклонил ключ YouTube" in admin_messages[0]
+    assert USER not in world.intake._busy  # занятость снята несмотря на неожиданный сбой доставки
+
+
+async def test_refusal_delivery_survives_an_unexpected_error(db, settings):
+    """Отправка отказа падает с неожиданной ошибкой: запись всё равно пишется, в журнал — только тип ошибки."""
+    class BrokenSend:
+        async def send(self, chat_id, rich_message, reply_markup=None):
+            raise RuntimeError(UNEXPECTED_ERROR_MARKER)
+
+        async def edit(self, chat_id, message_id, rich_message, reply_markup=None):
+            raise RuntimeError(UNEXPECTED_ERROR_MARKER)
+
+    world = build_world(db, settings, messenger=BrokenSend())
+    lines: list[str] = []
+    sink = logger.add(lines.append, format="{message}")
+    try:
+        await world.intake.handle_text(link("привет"))
+    finally:
+        logger.remove(sink)
+    log_text = "".join(lines)
+    assert UNEXPECTED_ERROR_MARKER not in log_text
+    assert "RuntimeError" in log_text
+    assert await rows(world.db, "SELECT status, error_code, charged FROM audits") == [
+        ("failed", "not_a_link", 0)]
 
 
 def test_entity_urls_take_links_and_text_links():

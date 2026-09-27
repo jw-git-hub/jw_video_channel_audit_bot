@@ -186,17 +186,22 @@ class AuditRunner:
         return replies.failure(self._texts, job.user.lang, self._brand, outcome.error_code)
 
     async def _deliver(self, job: Job, message: dict, keyboard: dict | None) -> None:
-        """Итог — до двух попыток с паузой; не прошли обе — один раз в журнал. Запись аудита закроется всё равно."""
+        """Итог — до двух попыток с паузой; любой сбой доставки не должен ронять диспетчер или учёт (Ю4)."""
         for attempt in range(1, DELIVERY_ATTEMPTS + 1):
             try:
                 job.message_id = await edit_or_send(self._out.messenger, job.chat_id, job.message_id, message,
                                                     keyboard)
                 return
-            except DeliveryFailed as error:
-                if attempt == DELIVERY_ATTEMPTS:
-                    logger.warning("итог аудита {} не доставлен: {}", job.audit_id, error)
-                else:
+            except Exception as error:  # noqa: BLE001 — доставка не должна ронять диспетчер; учёт закроется всё равно
+                if attempt < DELIVERY_ATTEMPTS:
                     await asyncio.sleep(RETRY_DELAY_SECONDS)
+                    continue
+                self._log_delivery_failure(job.audit_id, error)
+
+    def _log_delivery_failure(self, audit_id: int | None, error: Exception) -> None:
+        """Ожидаемый отказ Telegram — с его текстом; неожиданный — только тип: текст может нести данные канала (Ю4)."""
+        detail = error if isinstance(error, DeliveryFailed) else type(error).__name__
+        logger.warning("итог аудита {} не доставлен: {}", audit_id, detail)
 
     async def _notify_owner(self, outcome: AuditOutcome) -> None:
         """Паузы — раздел 8: ключ — раз в 6 часов, квота, потолок и ответ не той формы — раз в сутки."""
@@ -277,12 +282,18 @@ class Intake:
 
     async def _refuse(self, chat_id: int, user: User, target: Target | None, code: str, message: dict,
                       keyboard: dict | None = None) -> None:
+        await self._send_refusal(chat_id, message, keyboard)
+        new = NewAudit(user.user_id, user.last_source, target.kind if target else None, FAILED, code)
+        await best_effort(self._out.repo.create(new), "отказ", None)
+
+    async def _send_refusal(self, chat_id: int, message: dict, keyboard: dict | None) -> None:
+        """Отказ не доставлен — учёт всё равно пишется; неожиданный сбой — в журнал только по типу (Ю4)."""
         try:
             await self._out.messenger.send(chat_id, message, keyboard)
         except DeliveryFailed as error:
             logger.warning("отказ не доставлен: {}", error)
-        new = NewAudit(user.user_id, user.last_source, target.kind if target else None, FAILED, code)
-        await best_effort(self._out.repo.create(new), "отказ", None)
+        except Exception as error:  # noqa: BLE001 — доставка не должна ронять диспетчер; учёт запишется всё равно
+            logger.warning("отказ не доставлен: {}", type(error).__name__)
 
 
 @router.message(F.text.startswith(COMMAND_PREFIX))

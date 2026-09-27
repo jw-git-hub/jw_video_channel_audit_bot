@@ -121,6 +121,11 @@ def channel_by(parameter: str, value: str) -> tuple[int, dict]:
     return youtube("channels", {"part": "snippet,contentDetails", parameter: value, "fields": FIELDS["channels"]})
 
 
+def handle_label(index: int) -> str:
+    """Метка по номеру аргумента, не по значению (ТЗ, Сек13): в разведке нет настоящих @имён, только их форма."""
+    return f"--handle №{index}"
+
+
 def report_custom_url_shape(label: str, payload: dict) -> None:
     """Только форма snippet.customUrl и пустота title — сами значения каналов не печатаем (ТЗ, Сек13)."""
     item = (payload.get("items") or [{}])[0]
@@ -154,13 +159,13 @@ def check_key_and_fields(channel_id: str, shapes: bool) -> str | None:
 
 
 def check_handles(handles: list[str]) -> None:
-    for handle in handles:
+    for index, handle in enumerate(handles, start=1):
         bare = handle.removeprefix("@")
         results = {variant: channel_by("forHandle", variant) for variant in (handle, bare, bare.upper())}
         ids = {variant: ((payload.get("items") or [{}])[0].get("id")) for variant, (_, payload) in results.items()}
         print(f"forHandle: с @ / без @ / ВЕРХНИЙ РЕГИСТР — один канал: {len(set(ids.values())) == 1}, "
               f"найден: {all(ids.values())}")
-        report_custom_url_shape(f"канал {handle}", results[handle][1])
+        report_custom_url_shape(handle_label(index), results[handle][1])
     status, payload = channel_by("forHandle", UNKNOWN_HANDLE)
     report("forHandle несуществующего имени", status, payload)
 
@@ -169,6 +174,7 @@ def check_cyrillic(handle: str | None) -> None:
     if handle:
         status, payload = channel_by("forHandle", handle)
         report("forHandle на кириллице", status, payload)
+        report_custom_url_shape("--cyrillic-handle", payload)
 
 
 def check_legacy(urls: list[str], users: list[str]) -> None:

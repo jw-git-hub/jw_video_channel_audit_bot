@@ -46,6 +46,12 @@ def test_custom_url_shape_flags_presence_and_encoding():
                                               "non_ascii": True}
 
 
+def test_handle_label_names_by_position_not_by_the_real_handle():
+    try_api = load_script()
+    assert try_api.handle_label(1) == "--handle №1"
+    assert try_api.handle_label(2) == "--handle №2"
+
+
 def test_multipart_carries_fields_and_file(tmp_path):
     try_api = load_script()
     picture = tmp_path / "pic.png"

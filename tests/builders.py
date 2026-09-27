@@ -6,6 +6,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from bot.channel_audit.collect import VIDEO_CHANNEL_FIELDS
+from bot.channel_audit.links import LinkHits
+from bot.channel_audit.videos import Video
 from bot.core.clock import to_iso
 from tests.fakes import FAKE_NOW
 
@@ -99,3 +101,13 @@ class ScriptedClient:
 
     def methods(self) -> list[str]:
         return [method for method, _ in self.calls]
+
+
+KIND_DURATIONS = {"short": 60, "long": 600, "live": 3600}
+
+
+def video(days: float, kind: str = "long", views: int | None = 100, title: str = "Видео",
+          links: LinkHits = LinkHits(), video_id: str | None = None, broadcast: str = "none") -> Video:
+    """Видео, вышедшее days дней назад от FAKE_NOW."""
+    return Video(video_id or f"v{days:g}", title, days_ago(days), KIND_DURATIONS[kind], views, kind == "live",
+                 broadcast, links)

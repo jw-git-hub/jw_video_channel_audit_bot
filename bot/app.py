@@ -35,13 +35,14 @@ from bot.core import commands
 from bot.core.access import OpenGate
 from bot.core.clock import Clock, SystemClock
 from bot.core.commands import Brand
-from bot.core.db import BACKUP_DIR_NAME, create_engine, migrate
+from bot.core.db import BACKUP_DIR_NAME, migrate
 from bot.core.i18n import detect_lang
 from bot.core.messenger import AiogramMessenger, DeliveryFailed, Messenger, edit_or_send
 from bot.core.stats import best_effort
 from bot.core.throttle import ThrottleMiddleware
 from bot.core.users import Users
 from bot.core.watchdog import EVENT_LOOP, POLLING, Heartbeat, PollingPulse, loop_pulse, start_watchdog
+from bot.engine import open_engine
 from bot.locales import TEXTS
 from bot.maintenance import daily_maintenance
 from bot.schema import MIGRATIONS
@@ -72,7 +73,7 @@ class Parts:
 
 
 async def build(settings: Settings, clock: Clock) -> Parts:
-    engine = create_engine(settings.data_dir)
+    engine = open_engine(settings.data_dir)
     await migrate(engine, MIGRATIONS, settings.data_dir / BACKUP_DIR_NAME, clock.now().strftime(STAMP_FORMAT))
     heartbeat, kv = Heartbeat(), Kv(engine)
     bot = Bot(token=settings.bot_token.get_secret_value())

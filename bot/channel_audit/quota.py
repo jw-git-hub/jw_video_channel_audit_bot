@@ -66,9 +66,6 @@ class QuotaGate:
         self._roll_day()
         return self._units
 
-    def hours_left(self) -> int:
-        return hours_until_reset(self._clock.now())
-
     async def spend(self, units: int) -> None:
         self._roll_day()
         self._units += units

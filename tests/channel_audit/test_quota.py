@@ -27,7 +27,6 @@ async def test_quota_exceeded_blocks_the_rest_of_the_day(db):
     gate = QuotaGate(Kv(db), FakeClock(), ceiling=8000)
     await gate.exhaust()
     assert gate.block_reason() == QUOTA
-    assert gate.hours_left() == HOURS_TO_PACIFIC_MIDNIGHT
 
 
 async def test_restart_keeps_todays_count_and_forgets_yesterdays(db):

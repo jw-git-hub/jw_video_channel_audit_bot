@@ -27,6 +27,7 @@ CHANNEL_PARTS = "snippet,contentDetails"
 VIDEO_PARTS = "snippet,contentDetails,statistics,liveStreamingDetails"
 PAGE_SIZE = "50"
 BATCH_SIZE = 50
+MAX_PAGES = MAX_VIDEOS // BATCH_SIZE + 1  # страница сверх 200 видео — на случай пересечения границы в 12 месяцев
 ID_SEPARATOR = ","
 HANDLE_MARK = "@"
 BY_HANDLE = "forHandle"
@@ -98,11 +99,14 @@ class Collector:
         return found
 
     async def _upload_ids(self, uploads: str, deadline: float, meter: Meter) -> list[str]:
-        """Страницы по 50 — до 200 видео или до 12 месяцев; после границы ещё одна, если есть место (ТЗ, 5.1)."""
+        """Страницы по 50 — до 200 видео или до 12 месяцев; после границы ещё одна, если есть место (ТЗ, 5.1).
+
+        Не больше MAX_PAGES вовсе: без этого сплошь недатированный плейлист листался бы до самого срока
+        аудита — дата считается только у части записей, счёт по ним не растёт (F7)."""
         cutoff = self._clock.now() - timedelta(days=BASELINE_DAYS)
         ids: list[str] = []
         token, crossed = None, False
-        while True:
+        for _ in range(MAX_PAGES):
             page = await self._page(uploads, token, deadline, meter)
             entries = [entry for entry in map(_entry, _items(page)) if entry]
             ids += [video_id for video_id, _ in entries]
@@ -110,6 +114,7 @@ class Collector:
             if len(ids) >= MAX_VIDEOS or not token or crossed:
                 return ids[:MAX_VIDEOS]
             crossed = any(published < cutoff for _, published in entries)
+        return ids[:MAX_VIDEOS]
 
     async def _page(self, uploads: str, token: str | None, deadline: float, meter: Meter) -> dict[str, Any]:
         params = {"part": "contentDetails", "playlistId": uploads, "maxResults": PAGE_SIZE, "fields": PAGE_FIELDS}
@@ -121,8 +126,12 @@ class Collector:
             return {}  # плейлист пуст или его нет (404 playlistNotFound) — короткий отчёт (ТЗ, 6.6)
 
     async def _details(self, ids: list[str], deadline: float, meter: Meter) -> list[Video]:
+        """4xx на пачку ID — про сами видео между листанием и запросом, не про присланное (ТЗ, Л5; F9)."""
         params = {"part": VIDEO_PARTS, "id": ID_SEPARATOR.join(ids), "fields": VIDEO_FIELDS}
-        payload = await self._client.call(VIDEOS, params, deadline, meter)
+        try:
+            payload = await self._client.call(VIDEOS, params, deadline, meter)
+        except NotFound:
+            raise ServiceDown(SHAPE) from None
         return [video for video in map(_video, _items(payload)) if video]
 
 

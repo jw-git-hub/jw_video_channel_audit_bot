@@ -1,6 +1,6 @@
 import pytest
 
-from bot.channel_audit.collect import CHANNEL_FIELDS, PAGE_FIELDS, ChannelInfo, ChannelNotFound, Collector
+from bot.channel_audit.collect import CHANNEL_FIELDS, MAX_PAGES, PAGE_FIELDS, ChannelInfo, ChannelNotFound, Collector
 from bot.channel_audit.input import CHANNEL_ID, HANDLE, LEGACY, USERNAME, VIDEO, Target
 from bot.channel_audit.links import LinkHits
 from bot.channel_audit.videos import Kind
@@ -117,6 +117,17 @@ async def test_one_more_page_after_crossing_twelve_months_then_stop():
                                                                                                           "p3"]
 
 
+async def test_undated_pages_stop_after_max_pages():
+    """Плейлист сплошь без дат раньше листался до самого срока аудита (F7) — теперь ограничен MAX_PAGES."""
+    client = ScriptedClient()
+    undated_page = page([{"contentDetails": {"videoId": "novideo"}}], "next")
+    client.pages[None] = undated_page
+    client.pages["next"] = undated_page
+    videos = await collector(client).videos(UPLOADS, DEADLINE, Meter())
+    assert client.methods().count("playlistItems") == MAX_PAGES
+    assert videos == []
+
+
 async def test_private_items_without_date_are_skipped_and_details_come_in_batches():
     client = ScriptedClient()
     entries = [page_entry(f"v{index}", days_ago(index)) for index in range(1, 121)] + [page_entry("private", None)]
@@ -146,6 +157,22 @@ async def test_video_details_are_parsed_and_descriptions_become_link_hits():
     live, upcoming = await collector(client).videos(UPLOADS, DEADLINE, Meter())
     assert (live.kind, live.duration_seconds, live.views, live.links) == (Kind.LIVE, 0, 100, LinkHits(telegram=True))
     assert (upcoming.views, upcoming.broadcast) == (None, "upcoming")
+
+
+async def test_not_found_on_a_video_batch_is_service_down_not_a_bug():
+    """4xx на videos.list по ID из плейлиста — не о присланном канале (F9): не списывается, не «упал» (Ю4)."""
+    class NotFoundVideos(ScriptedClient):
+        async def call(self, method, params, deadline, meter):
+            if method == "videos":
+                self.calls.append((method, dict(params)))
+                meter.units += 1
+                raise NotFound("videoNotFound")
+            return await super().call(method, params, deadline, meter)
+
+    client = NotFoundVideos()
+    client.pages[None] = page([page_entry("v1", days_ago(1))])
+    with pytest.raises(ServiceDown, match="shape"):
+        await collector(client).videos(UPLOADS, DEADLINE, Meter())
 
 
 async def test_items_that_are_not_a_list_mean_a_changed_answer():

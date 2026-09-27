@@ -1,0 +1,43 @@
+"""Суточное обслуживание базы (ТЗ, раздел 12, Ю4): сначала уборка данных YouTube, потом копия.
+
+Порядок важен: копия снимается уже после уборки, поэтому ни в базе, ни в копиях данные YouTube не старше
+1 (кэш) + 20 + 1 + 7 = 29 дней. Копии перед миграцией (core/db.py) у чекера живут вечно — здесь они удаляются
+через 7 дней, как суточные.
+"""
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from bot.channel_audit.thresholds import API_DATA_DAYS
+from bot.core.clock import to_iso
+from bot.core.db import DAILY_BACKUPS_KEPT, backup_daily, daily_backup_path
+
+PRE_MIGRATION_GLOB = "pre-v*.db"
+SECONDS_IN_DAY = 86_400
+WIPE = """
+UPDATE audits SET channel_id = NULL, handle = NULL
+WHERE created_at < :before AND (channel_id IS NOT NULL OR handle IS NOT NULL)"""
+
+
+async def wipe_youtube_data(engine: AsyncEngine, now: datetime) -> int:
+    before = to_iso(now - timedelta(days=API_DATA_DAYS))
+    async with engine.begin() as connection:
+        return (await connection.execute(text(WIPE), {"before": before})).rowcount
+
+
+def drop_old_migration_copies(backup_dir: Path, now: datetime) -> list[Path]:
+    limit = now.timestamp() - DAILY_BACKUPS_KEPT * SECONDS_IN_DAY
+    old = sorted(path for path in backup_dir.glob(PRE_MIGRATION_GLOB) if path.stat().st_mtime < limit)
+    for path in old:
+        path.unlink()
+    return old
+
+
+async def daily_maintenance(engine: AsyncEngine, backup_dir: Path, now: datetime) -> None:
+    """Уборка → копия за день (одна: перезапуск не затирает утреннюю) → старые копии перед миграцией."""
+    await wipe_youtube_data(engine, now)
+    if not daily_backup_path(backup_dir, now.date()).exists():
+        await backup_daily(engine, backup_dir, now.date())
+    drop_old_migration_copies(backup_dir, now)

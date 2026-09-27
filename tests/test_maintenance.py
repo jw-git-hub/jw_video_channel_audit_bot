@@ -4,7 +4,7 @@ from datetime import timedelta
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from bot.maintenance import daily_maintenance, drop_old_migration_copies, wipe_youtube_data
+from bot.maintenance import daily_maintenance, drop_old_daily_backups, drop_old_migration_copies, wipe_youtube_data
 from tests.builders import insert_audit
 from tests.fakes import FAKE_NOW
 
@@ -32,6 +32,18 @@ async def test_daily_copy_is_taken_after_the_wipe(db, tmp_path):
         assert await channel_rows(copy) == [(None, None, "done")]
     finally:
         await copy.dispose()
+
+
+def test_daily_backups_older_than_a_week_by_name_are_removed_after_downtime(tmp_path):
+    """Простой бота не должен продлить жизнь суточным копиям дольше их даты в имени (ТЗ, Р19, Ю4)."""
+    fresh_day, old_day, today = (FAKE_NOW.date() - timedelta(days=3), FAKE_NOW.date() - timedelta(days=10),
+                                 FAKE_NOW.date())
+    fresh, old, current = (tmp_path / f"bot-{day.isoformat()}.db" for day in (fresh_day, old_day, today))
+    garbage = tmp_path / "bot-not-a-date.db"
+    for path in (fresh, old, current, garbage):
+        path.write_bytes(b"copy")
+    assert drop_old_daily_backups(tmp_path, FAKE_NOW) == [old]
+    assert fresh.exists() and current.exists() and garbage.exists() and not old.exists()
 
 
 def test_migration_copies_older_than_a_week_are_removed(tmp_path):

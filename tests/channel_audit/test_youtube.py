@@ -174,19 +174,34 @@ async def test_slow_answer_is_retried_then_service_down(youtube_client):
         await call(client, clock)
 
 
-async def test_network_failure_is_logged_with_audit_id_method_and_error_type(youtube_client):
-    """Сетевой сбой не проходит молча (F8): в журнал — номер аудита, метод и тип ошибки, без адреса и текста."""
+class _BoomOnEnter:
+    """Ошибка сети не при вызове .get(), а при входе в ответ — как у настоящего aiohttp-запроса."""
+
+    def __init__(self, error: Exception):
+        self._error = error
+
+    async def __aenter__(self):
+        raise self._error
+
+    async def __aexit__(self, *exc_info) -> bool:
+        return False
+
+
+async def test_network_failure_is_logged_with_audit_id_method_and_error_type(youtube_client, monkeypatch):
+    """Сетевой сбой не проходит молча (F8): в журнал — номер аудита, метод и тип ошибки, без текста ошибки."""
+    marker = "network-failure-marker-message-example"
     lines: list[str] = []
     sink = logger.add(lines.append, format="{message}")
     try:
-        fake = FakeGoogle((200, OK_BODY), (200, OK_BODY), delay=0.5)
-        client, _, clock = await youtube_client(fake, request_timeout=0.1)
+        client, _, clock = await youtube_client(FakeGoogle((200, OK_BODY)))
+        monkeypatch.setattr(client._session, "get", lambda *args, **kwargs: _BoomOnEnter(aiohttp.ClientError(marker)))
         with pytest.raises(ServiceDown):
             await call(client, clock, meter=Meter(42))
     finally:
         logger.remove(sink)
     text = "".join(lines)
-    assert "42" in text and "channels" in text and "TimeoutError" in text
+    assert "42" in text and "channels" in text and "ClientError" in text
+    assert marker not in text  # текст самой ошибки в журнал не идёт — только её тип (ТЗ, Сек7)
 
 
 async def test_huge_answer_is_refused(youtube_client):

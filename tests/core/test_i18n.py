@@ -5,7 +5,14 @@ import pytest
 from bot.core.i18n import detect_lang, plural_ru
 from bot.locales import TEXTS, en, ru
 
-EMOJI_START = 0x1F000
+EMOJI_RANGES = ((0x2600, 0x27BF), (0xFE0F, 0xFE0F), (0x1F000, 0x1FAFF))
+BUTTON_SUFFIX = "_button"
+BUTTON_EMOJI = {"discuss_button": "💬", "another_button": "🔁", "channel_button": "📣",
+                "about_site_button": "🌐", "order_button": "✉️"}
+
+
+def has_emoji(text: str) -> bool:
+    return any(low <= ord(char) <= high for char in text for low, high in EMOJI_RANGES)
 
 
 @pytest.mark.parametrize(("code", "lang"), [
@@ -61,6 +68,14 @@ def test_locales_have_same_keys():
     assert ru.WORDS.keys() == en.WORDS.keys()
 
 
-def test_texts_have_no_emoji():
-    all_texts = [*ru.TEXTS.values(), *en.TEXTS.values()]
-    assert not [text for text in all_texts if any(ord(char) >= EMOJI_START for char in text)]
+def test_texts_have_no_emoji_except_buttons():
+    all_texts = [text for texts in (ru.TEXTS, en.TEXTS) for key, text in texts.items()
+                 if not key.endswith(BUTTON_SUFFIX)]
+    assert not [text for text in all_texts if has_emoji(text)]
+
+
+@pytest.mark.parametrize("texts", [ru.TEXTS, en.TEXTS])
+def test_every_button_starts_with_its_emoji(texts):
+    buttons = {key: text for key, text in texts.items() if key.endswith(BUTTON_SUFFIX)}
+    assert buttons.keys() == BUTTON_EMOJI.keys()
+    assert all(text.startswith(BUTTON_EMOJI[key] + " ") for key, text in buttons.items())

@@ -70,7 +70,7 @@ async def test_about_has_buttons_and_footer(db):
     messenger = FakeMessenger()
     await on_about(make_message("/about"), users=Users(db, FakeClock()), messenger=messenger, texts=TEXTS, brand=BRAND)
     chat_id, message, keyboard = messenger.sent[-1]
-    assert [row[0]["text"] for row in keyboard["inline_keyboard"]] == ["Сайт jw-dev.pro", "Канал"]
+    assert [row[0]["text"] for row in keyboard["inline_keyboard"]] == ["🌐 Сайт jw-dev.pro", "📣 Канал"]
     assert rich_text(message).endswith("────\njw-dev.pro · @jw_dev_pro")
 
 

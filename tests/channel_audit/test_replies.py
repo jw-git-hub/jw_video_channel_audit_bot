@@ -52,7 +52,7 @@ def test_not_youtube_offers_to_talk_to_the_developer():
     message, keyboard = replies.not_youtube(TEXTS, "ru", BRAND)
     assert "Это не YouTube." in rich_text(message)
     button = keyboard["inline_keyboard"][0][0]
-    assert (button["text"], button["style"]) == ("Обсудить с разработчиком", "primary")
+    assert (button["text"], button["style"]) == ("💬 Обсудить с разработчиком", "primary")
     assert unquote(button["url"]) == "https://t.me/jw_dev_pro?text=Пришёл из @jw_video_channel_audit_bot"
 
 

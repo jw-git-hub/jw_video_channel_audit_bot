@@ -1,4 +1,4 @@
-"""Texts in English: first person, no emoji, the «>» marker (ТЗ, 7.1)."""
+"""Texts in English: first person, no emoji (except one at the start of each button), the «>» marker (ТЗ, 7.1)."""
 
 DECIMAL_SEPARATOR = "."
 THOUSANDS_SEPARATOR = ","
@@ -34,10 +34,10 @@ TEXTS = {
     "lang_done": "Done: I'll write in English.",
     "about": "I'm jw, and I made this bot. I build websites, Telegram bots and automation for what you still do "
              "by hand.",
-    "about_site_button": "Website jw-dev.pro",
-    "channel_button": "Channel",
+    "about_site_button": "🌐 Website jw-dev.pro",
+    "channel_button": "📣 Channel",
     "order": "Message me directly with what you need — I'll reply myself.",
-    "order_button": "Message @jw_dev_pro",
+    "order_button": "✉️ Message @jw_dev_pro",
     "order_prefill": "From @jw_video_channel_audit_bot",
     "throttled": "Too fast — wait a couple of seconds.",
     "unexpected_error": "Something went wrong. Please try again.",
@@ -114,8 +114,8 @@ TEXTS = {
     "signature_no_videos": "Public YouTube data as of {date}. I looked for links in the channel description.",
     "no_videos": "the channel has no public videos yet",
     "found_by_name": "Found by name — if this isn't the right channel, send a link to any of its videos.",
-    "discuss_button": "Talk to the developer",
-    "another_button": "Check another channel",
+    "discuss_button": "💬 Talk to the developer",
+    "another_button": "🔁 Check another channel",
     "discuss_prefill": "From the channel audit: {channel}",
     "checking": "Looking at the channel…",
     "again": "Send a link to a YouTube channel, its @handle or a link to any of its videos.",

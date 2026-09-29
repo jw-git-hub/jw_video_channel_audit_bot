@@ -110,7 +110,7 @@ async def test_link_gets_status_then_report_in_the_same_message(world):
     chat_id, message_id, report, keyboard = world.messenger.edited[-1]
     assert (chat_id, message_id) == (USER, STATUS_ID)
     assert "Байк-прокат Пример" in rich_text(report)
-    assert keyboard["inline_keyboard"][0][0]["text"] == "Обсудить с разработчиком"
+    assert keyboard["inline_keyboard"][0][0]["text"] == "💬 Обсудить с разработчиком"
     assert await rows(world.db, "SELECT status, charged, from_cache, offered, handle, api_units FROM audits") == [
         ("done", 1, 0, 1, "@bike-example", 3)]
 
@@ -133,7 +133,7 @@ async def test_not_youtube_offers_to_talk_to_the_developer(world):
     await world.intake.handle_text(link("https://instagram.com/bike_rental_example"))
     _, message, keyboard = world.messenger.sent[-1]
     assert "Это не YouTube" in rich_text(message)
-    assert keyboard["inline_keyboard"][0][0]["text"] == "Обсудить с разработчиком"
+    assert keyboard["inline_keyboard"][0][0]["text"] == "💬 Обсудить с разработчиком"
 
 
 async def test_not_found_is_charged(world):
@@ -192,7 +192,7 @@ async def test_report_is_sent_anew_when_status_message_is_gone(world):
     await world.intake.handle_text(link("@bike_example"))
     _, report, keyboard = world.messenger.sent[-1]
     assert "Байк-прокат Пример" in rich_text(report)
-    assert keyboard["inline_keyboard"][0][0]["text"] == "Обсудить с разработчиком"
+    assert keyboard["inline_keyboard"][0][0]["text"] == "💬 Обсудить с разработчиком"
     assert await rows(world.db, "SELECT message_id FROM audits") == [(STATUS_ID + 1,)]
 
 
